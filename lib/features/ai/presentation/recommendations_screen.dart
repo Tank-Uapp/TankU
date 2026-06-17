@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../health/data/tank_photo_repository.dart';
 import '../data/ai_repository.dart';
 import '../domain/chat_message.dart';
 
@@ -21,6 +22,10 @@ class _RecommendationsScreenState
   final List<ChatMessage> _messages = [];
   bool _loading = false;
   String? _error;
+
+  /// Whether to attach tank photos to the initial analysis (vision model —
+  /// slower and more costly, so off by default).
+  bool _usePhotos = false;
 
   @override
   void initState() {
@@ -63,6 +68,14 @@ class _RecommendationsScreenState
     await _startIfNeeded();
   }
 
+  /// Photos only affect the initial analysis, so changing the toggle restarts
+  /// the conversation with the new setting.
+  Future<void> _setUsePhotos(bool value) async {
+    if (_loading || value == _usePhotos) return;
+    setState(() => _usePhotos = value);
+    await _reset();
+  }
+
   Future<void> _retry() async {
     if (_loading) return;
     await _run(sendHistory: List.of(_messages));
@@ -75,8 +88,11 @@ class _RecommendationsScreenState
     });
     _scrollToBottom();
     try {
-      final reply =
-          await ref.read(aiRepositoryProvider).chat(widget.tankId, sendHistory);
+      final reply = await ref.read(aiRepositoryProvider).chat(
+            widget.tankId,
+            sendHistory,
+            includePhotos: _usePhotos,
+          );
       if (!mounted) return;
       setState(() {
         _messages.add(ChatMessage.assistant(reply));
@@ -101,6 +117,23 @@ class _RecommendationsScreenState
         curve: Curves.easeOut,
       );
     });
+  }
+
+  /// A switch to include tank photos in the analysis. Only shown when the tank
+  /// actually has photos, so it doesn't clutter the screen otherwise.
+  Widget _buildPhotoToggle(BuildContext context) {
+    final hasPhotos =
+        ref.watch(tankPhotosProvider(widget.tankId)).asData?.value.isNotEmpty ??
+            false;
+    if (!hasPhotos) return const SizedBox.shrink();
+    return SwitchListTile(
+      value: _usePhotos,
+      onChanged: _loading ? null : _setUsePhotos,
+      dense: true,
+      secondary: const Icon(Icons.photo_library_outlined),
+      title: const Text('Analyze tank photos'),
+      subtitle: const Text('Adds visual progress — slower, uses more credits'),
+    );
   }
 
   @override
@@ -139,6 +172,7 @@ class _RecommendationsScreenState
               ),
             ),
           ),
+          _buildPhotoToggle(context),
           Expanded(
             child: _messages.isEmpty && _loading
                 ? const _ThinkingFull()

@@ -128,6 +128,20 @@ create index if not exists health_logs_tank_idx
   on public.health_logs (tank_id, observed_at desc);
 
 -- ----------------------------------------------------------------------------
+-- Daily tank photos (up to 3 per tank per day, enforced in the app). The image
+-- files live in the private `tank-photos` storage bucket; each row points to one.
+-- ----------------------------------------------------------------------------
+create table if not exists public.tank_photos (
+  id           uuid primary key default gen_random_uuid(),
+  tank_id      uuid not null references public.tanks (id) on delete cascade,
+  storage_path text not null,
+  taken_on     date not null default current_date,
+  created_at   timestamptz not null default now()
+);
+create index if not exists tank_photos_tank_idx
+  on public.tank_photos (tank_id, taken_on desc);
+
+-- ----------------------------------------------------------------------------
 -- Row Level Security
 -- ----------------------------------------------------------------------------
 alter table public.tanks              enable row level security;
@@ -138,6 +152,7 @@ alter table public.feedings           enable row level security;
 alter table public.parameter_types    enable row level security;
 alter table public.parameter_readings enable row level security;
 alter table public.health_logs        enable row level security;
+alter table public.tank_photos        enable row level security;
 
 -- Tanks: owner-only.
 create policy "tanks_owner" on public.tanks
@@ -200,4 +215,39 @@ create policy "health_logs_via_tank" on public.health_logs
   ) with check (
     exists (select 1 from public.tanks t
             where t.id = health_logs.tank_id and t.user_id = auth.uid())
+  );
+
+create policy "tank_photos_via_tank" on public.tank_photos
+  for all using (
+    exists (select 1 from public.tanks t
+            where t.id = tank_photos.tank_id and t.user_id = auth.uid())
+  ) with check (
+    exists (select 1 from public.tanks t
+            where t.id = tank_photos.tank_id and t.user_id = auth.uid())
+  );
+
+-- ----------------------------------------------------------------------------
+-- Storage bucket for tank photos (private; access keyed to the user's folder,
+-- path layout {user_id}/{tank_id}/{uuid}.jpg).
+-- ----------------------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('tank-photos', 'tank-photos', false)
+on conflict (id) do nothing;
+
+create policy "tank_photos_read_own" on storage.objects
+  for select using (
+    bucket_id = 'tank-photos'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+create policy "tank_photos_insert_own" on storage.objects
+  for insert with check (
+    bucket_id = 'tank-photos'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+create policy "tank_photos_delete_own" on storage.objects
+  for delete using (
+    bucket_id = 'tank-photos'
+    and (storage.foldername(name))[1] = auth.uid()::text
   );

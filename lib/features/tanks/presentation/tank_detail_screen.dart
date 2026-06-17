@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/glass.dart';
 import '../../health/data/health_repository.dart';
+import '../../health/data/tank_photo_repository.dart';
 import '../../health/domain/health_log.dart';
+import '../../health/domain/tank_photo.dart';
 import '../../parameters/data/parameter_repository.dart';
 import '../../parameters/domain/parameter_reading.dart';
 import '../../parameters/domain/parameter_type.dart';
@@ -47,6 +49,7 @@ class TankDetailScreen extends ConsumerWidget {
           onRefresh: () async {
             ref.invalidate(readingsProvider((tankId: tankId, parameterKey: null)));
             ref.invalidate(healthLogsProvider(tankId));
+            ref.invalidate(tankPhotosProvider(tankId));
             ref.invalidate(equipmentProvider(tankId));
             ref.invalidate(livestockProvider(tankId));
             ref.invalidate(dosingProvider(tankId));
@@ -395,10 +398,22 @@ class _HealthSection extends ConsumerWidget {
     final async = ref.watch(healthLogsProvider(tankId));
     return _Section(
       title: 'Health',
-      child: async.when(
-        loading: () => const LinearProgressIndicator(),
-        error: (e, _) => Text('$e'),
-        data: (logs) {
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          async.when(
+            loading: () => const LinearProgressIndicator(),
+            error: (e, _) => Text('$e'),
+            data: (logs) => _healthSummary(context, ref, logs),
+          ),
+          _HealthPhotosStrip(tankId: tankId),
+        ],
+      ),
+    );
+  }
+
+  Widget _healthSummary(
+      BuildContext context, WidgetRef ref, List<HealthLog> logs) {
           if (logs.isEmpty) {
             return const Text(
                 'No health checks yet. Use "Log → Health" to rate the tank.');
@@ -491,7 +506,88 @@ class _HealthSection extends ConsumerWidget {
               ],
             ],
           );
-        },
+  }
+}
+
+/// A horizontal strip of recent tank photos shown under the Health summary.
+/// Tapping a photo opens it full-screen. Photos are added from Log → Health.
+class _HealthPhotosStrip extends ConsumerWidget {
+  const _HealthPhotosStrip({required this.tankId});
+  final String tankId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(tankPhotosProvider(tankId));
+    final photos = async.asData?.value ?? const <TankPhoto>[];
+    if (photos.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 24),
+        Text('Photos', style: Theme.of(context).textTheme.labelMedium),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 88,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: photos.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            itemBuilder: (context, i) {
+              final p = photos[i];
+              return GestureDetector(
+                onTap: p.signedUrl == null
+                    ? null
+                    : () => _openViewer(context, p.signedUrl!),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: p.signedUrl == null
+                      ? Container(
+                          width: 88,
+                          height: 88,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest,
+                          child: const Icon(Icons.image_outlined),
+                        )
+                      : Image.network(
+                          p.signedUrl!,
+                          width: 88,
+                          height: 88,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 88,
+                            height: 88,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                            child: const Icon(Icons.broken_image_outlined),
+                          ),
+                        ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _openViewer(BuildContext context, String url) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+          ),
+          body: Center(
+            child: InteractiveViewer(
+              child: Image.network(url, fit: BoxFit.contain),
+            ),
+          ),
+        ),
       ),
     );
   }

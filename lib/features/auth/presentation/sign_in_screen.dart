@@ -4,8 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../data/auth_repository.dart';
 
-/// TankU brand lockup: a graduation-cap badge over water, the name, and the
-/// "your tank will thank you" slogan. Reused on the auth screens.
+/// TankU brand lockup: the clownfish-in-a-cap mark over a water badge, the
+/// name, and the "your tank will thank you" slogan. Reused on the auth screens.
 class _BrandHeader extends StatelessWidget {
   const _BrandHeader();
 
@@ -15,8 +15,9 @@ class _BrandHeader extends StatelessWidget {
     return Column(
       children: [
         Container(
-          width: 84,
-          height: 84,
+          width: 96,
+          height: 96,
+          padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: const LinearGradient(
@@ -32,7 +33,7 @@ class _BrandHeader extends StatelessWidget {
               ),
             ],
           ),
-          child: const Icon(Icons.school, size: 42, color: Colors.white),
+          child: Image.asset('assets/icon/tanku_mark.png', fit: BoxFit.contain),
         ),
         const SizedBox(height: 14),
         Text('TankU',

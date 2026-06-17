@@ -13,12 +13,20 @@ class AiRepository {
   /// Sends the conversation [history] for [tankId] and returns the AI's reply.
   /// Pass an empty [history] to get the initial analysis. The function always
   /// re-injects the tank's current data, so the AI stays grounded each turn.
-  Future<String> chat(String tankId, List<ChatMessage> history) async {
+  ///
+  /// Set [includePhotos] to attach the tank's recent photos to the initial
+  /// analysis (uses a vision model — slower and more costly), off by default.
+  Future<String> chat(
+    String tankId,
+    List<ChatMessage> history, {
+    bool includePhotos = false,
+  }) async {
     final res = await _client.functions.invoke(
       'ai-recommend',
       body: {
         'tank_id': tankId,
         'messages': history.map((m) => m.toJson()).toList(),
+        'include_photos': includePhotos,
       },
     );
     final data = res.data;

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../health/data/health_repository.dart';
 import '../../health/domain/health_log.dart';
+import '../../health/presentation/daily_tank_photos.dart';
 import '../data/parameter_repository.dart';
 import '../domain/parameter_reading.dart';
 import '../domain/parameter_type.dart';
@@ -245,6 +246,8 @@ class _LogParameterScreenState extends ConsumerState<LogParameterScreen> {
                 'behavior, algae, anything that needs improvement…',
           ),
         ),
+        const SizedBox(height: 24),
+        DailyTankPhotos(tankId: widget.tankId),
       ],
     );
   }
