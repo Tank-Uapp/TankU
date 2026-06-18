@@ -20,6 +20,10 @@ import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
 
 const VENICE_URL = "https://api.venice.ai/api/v1/chat/completions";
 
+// Per-user cap on AI calls per day (each call — the initial analysis and every
+// follow-up — counts). Override with the AI_DAILY_LIMIT secret if needed.
+const DAILY_LIMIT = Number(Deno.env.get("AI_DAILY_LIMIT") ?? "4");
+
 // How many photos to attach to the initial analysis (sampled evenly across the
 // available time range, always including the oldest and newest), and the size
 // cap per image so the request to Venice stays reasonable.
@@ -178,6 +182,42 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_ANON_KEY")!,
       { global: { headers: { Authorization: authHeader } } },
     );
+
+    // Identify the caller and enforce the per-user daily limit before doing any
+    // expensive work. The counter is read/written with the service role so a
+    // user can't tamper with it (they only have read access via RLS).
+    const { data: userData, error: userErr } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+    if (userErr || !userId) {
+      return json({ error: "Not authenticated." }, 401);
+    }
+
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!serviceKey) {
+      return json({ error: "Server is misconfigured (no service role)." }, 500);
+    }
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
+
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+    const { data: usageRow } = await admin
+      .from("ai_usage")
+      .select("count")
+      .eq("user_id", userId)
+      .eq("day", today)
+      .maybeSingle();
+    const used = usageRow?.count ?? 0;
+    if (used >= DAILY_LIMIT) {
+      return json(
+        {
+          error:
+            `You've used all ${DAILY_LIMIT} of today's AI questions. ` +
+            "Please try again tomorrow.",
+          code: "rate_limited",
+          usage: { used, limit: DAILY_LIMIT, remaining: 0 },
+        },
+        429,
+      );
+    }
 
     const [
       { data: tank },
@@ -426,7 +466,31 @@ Deno.serve(async (req) => {
     const recommendation: string =
       data?.choices?.[0]?.message?.content ?? "No recommendation returned.";
 
-    return json({ recommendation });
+    // Count this successful call. Read-then-write is fine at this volume; a
+    // rare race could allow one extra call, never fewer.
+    const { data: incRow } = await admin
+      .from("ai_usage")
+      .upsert(
+        {
+          user_id: userId,
+          day: today,
+          count: used + 1,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,day" },
+      )
+      .select("count")
+      .maybeSingle();
+    const newUsed = incRow?.count ?? used + 1;
+
+    return json({
+      recommendation,
+      usage: {
+        used: newUsed,
+        limit: DAILY_LIMIT,
+        remaining: Math.max(0, DAILY_LIMIT - newUsed),
+      },
+    });
   } catch (e) {
     return json({ error: `Unexpected error: ${e}` }, 500);
   }

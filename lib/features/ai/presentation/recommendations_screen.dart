@@ -27,12 +27,10 @@ class _RecommendationsScreenState
   /// slower and more costly, so off by default).
   bool _usePhotos = false;
 
-  @override
-  void initState() {
-    super.initState();
-    // Generate the opening analysis once the first frame is up.
-    WidgetsBinding.instance.addPostFrameCallback((_) => _startIfNeeded());
-  }
+  /// AI questions the user has left today, as reported by the server. Null
+  /// until the first reply. The initial analysis is started by the user (not
+  /// auto-run) so it doesn't silently spend a question on every screen open.
+  int? _remaining;
 
   @override
   void dispose() {
@@ -41,8 +39,10 @@ class _RecommendationsScreenState
     super.dispose();
   }
 
+  bool get _limitReached => _remaining == 0;
+
   Future<void> _startIfNeeded() async {
-    if (_messages.isNotEmpty || _loading) return;
+    if (_messages.isNotEmpty || _loading || _limitReached) return;
     await _run(sendHistory: const []);
   }
 
@@ -50,7 +50,7 @@ class _RecommendationsScreenState
 
   Future<void> _sendText(String raw) async {
     final text = raw.trim();
-    if (text.isEmpty || _loading) return;
+    if (text.isEmpty || _loading || _limitReached) return;
     _input.clear();
     setState(() {
       _messages.add(ChatMessage.user(text));
@@ -60,20 +60,26 @@ class _RecommendationsScreenState
     await _run(sendHistory: List.of(_messages));
   }
 
-  Future<void> _reset() async {
+  /// Clears the conversation back to the start panel. Doesn't auto-run an
+  /// analysis (that would spend a question) — the user taps "Analyze" again.
+  void _reset() {
+    if (_loading) return;
     setState(() {
       _messages.clear();
       _error = null;
     });
-    await _startIfNeeded();
   }
 
-  /// Photos only affect the initial analysis, so changing the toggle restarts
-  /// the conversation with the new setting.
-  Future<void> _setUsePhotos(bool value) async {
+  /// Photos only affect the initial analysis, so changing the toggle clears the
+  /// conversation; the next analysis (started by the button) uses the new
+  /// setting.
+  void _setUsePhotos(bool value) {
     if (_loading || value == _usePhotos) return;
-    setState(() => _usePhotos = value);
-    await _reset();
+    setState(() {
+      _usePhotos = value;
+      _messages.clear();
+      _error = null;
+    });
   }
 
   Future<void> _retry() async {
@@ -95,10 +101,18 @@ class _RecommendationsScreenState
           );
       if (!mounted) return;
       setState(() {
-        _messages.add(ChatMessage.assistant(reply));
+        _messages.add(ChatMessage.assistant(reply.text));
+        if (reply.remaining != null) _remaining = reply.remaining;
         _loading = false;
       });
       _scrollToBottom();
+    } on AiLimitException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _remaining = 0;
+        _error = e.toString();
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -174,8 +188,13 @@ class _RecommendationsScreenState
           ),
           _buildPhotoToggle(context),
           Expanded(
-            child: _messages.isEmpty && _loading
-                ? const _ThinkingFull()
+            child: _messages.isEmpty
+                ? (_loading
+                    ? const _ThinkingFull()
+                    : _StartPanel(
+                        limitReached: _limitReached,
+                        onStart: _startIfNeeded,
+                      ))
                 : ListView.builder(
                     controller: _scroll,
                     padding: const EdgeInsets.all(12),
@@ -189,12 +208,13 @@ class _RecommendationsScreenState
           if (_error != null)
             _ErrorBar(
               message: _error!,
-              onRetry: _loading ? null : _retry,
+              onRetry: (_loading || _limitReached) ? null : _retry,
             ),
-          const _Examples(),
+          if (_remaining != null) _QuotaLine(remaining: _remaining!),
+          if (_messages.isNotEmpty) const _Examples(),
           _InputBar(
             controller: _input,
-            enabled: !_loading,
+            enabled: !_loading && !_limitReached,
             onSend: _send,
           ),
         ],
@@ -308,6 +328,81 @@ class _ErrorBar extends StatelessWidget {
             if (onRetry != null)
               TextButton(onPressed: onRetry, child: const Text('Retry')),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The empty state: a button to start the (quota-counted) initial analysis.
+class _StartPanel extends StatelessWidget {
+  const _StartPanel({required this.onStart, required this.limitReached});
+  final VoidCallback onStart;
+  final bool limitReached;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.auto_awesome,
+                size: 48, color: theme.colorScheme.primary),
+            const SizedBox(height: 16),
+            Text('Get an AI analysis of your tank',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              'Grounded in your tank data. Each analysis or question counts '
+              'toward your daily AI limit.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: limitReached ? null : onStart,
+              icon: const Icon(Icons.auto_awesome),
+              label: const Text('Analyze my tank'),
+            ),
+            if (limitReached) ...[
+              const SizedBox(height: 12),
+              Text(
+                "You've used all of today's AI questions. Try again tomorrow.",
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Small line showing how many AI questions remain today.
+class _QuotaLine extends StatelessWidget {
+  const _QuotaLine({required this.remaining});
+  final int remaining;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final out = remaining <= 0;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: Text(
+        out
+            ? 'No AI questions left today'
+            : '$remaining AI question${remaining == 1 ? '' : 's'} left today',
+        style: TextStyle(
+          fontSize: 12,
+          color: out ? scheme.error : scheme.onSurfaceVariant,
         ),
       ),
     );

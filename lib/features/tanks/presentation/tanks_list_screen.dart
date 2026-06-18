@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/theme/glass.dart';
-import '../../auth/data/auth_repository.dart';
 import '../data/tank_repository.dart';
 import '../domain/tank.dart';
 
@@ -18,9 +17,9 @@ class TanksListScreen extends ConsumerWidget {
         title: const Text('My Tanks'),
         actions: [
           IconButton(
-            tooltip: 'Sign out',
-            icon: const Icon(Icons.logout),
-            onPressed: () => ref.read(authRepositoryProvider).signOut(),
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => context.push('/settings'),
           ),
         ],
       ),

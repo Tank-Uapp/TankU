@@ -142,6 +142,18 @@ create index if not exists tank_photos_tank_idx
   on public.tank_photos (tank_id, taken_on desc);
 
 -- ----------------------------------------------------------------------------
+-- Per-user daily AI usage counter (caps ai-recommend calls per user per day).
+-- Written by the edge function via the service role; users read their own row.
+-- ----------------------------------------------------------------------------
+create table if not exists public.ai_usage (
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  day        date not null default current_date,
+  count      integer not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (user_id, day)
+);
+
+-- ----------------------------------------------------------------------------
 -- Row Level Security
 -- ----------------------------------------------------------------------------
 alter table public.tanks              enable row level security;
@@ -153,6 +165,7 @@ alter table public.parameter_types    enable row level security;
 alter table public.parameter_readings enable row level security;
 alter table public.health_logs        enable row level security;
 alter table public.tank_photos        enable row level security;
+alter table public.ai_usage           enable row level security;
 
 -- Tanks: owner-only.
 create policy "tanks_owner" on public.tanks
@@ -225,6 +238,9 @@ create policy "tank_photos_via_tank" on public.tank_photos
     exists (select 1 from public.tanks t
             where t.id = tank_photos.tank_id and t.user_id = auth.uid())
   );
+
+create policy "ai_usage_read_own" on public.ai_usage
+  for select using (auth.uid() = user_id);
 
 -- ----------------------------------------------------------------------------
 -- Storage bucket for tank photos (private; access keyed to the user's folder,
