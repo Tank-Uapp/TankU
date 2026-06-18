@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
 
+# Allow the workflow's GITHUB_TOKEN to push the built site to the gh-pages
+# branch (otherwise the deploy step fails with a 403).
+permissions:
+  contents: write
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
